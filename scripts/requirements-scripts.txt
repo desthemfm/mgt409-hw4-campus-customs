@@ -1,0 +1,5 @@
+# Optional helper scripts only (the shop itself doesn't need these):
+#   scripts/clean_product_images.py  -> pillow     (white-background product photos)
+#   scripts/app_check.py             -> playwright (live-site test report; uses the installed Google Chrome)
+pillow
+playwright

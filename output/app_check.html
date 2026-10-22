@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App Check · Campus Customs (Problem 11)</title>
+<style>
+  body { font-family: -apple-system, 'Segoe UI', Inter, sans-serif; margin: 0; background: #f4f6fa; color: #14213d; line-height: 1.5; }
+  header { background: #061529; color: #eef4ff; padding: 28px 40px; }
+  header h1 { margin: 0 0 6px; font-size: 28px; }
+  header p { margin: 2px 0; color: #a9bdd6; }
+  main { max-width: 1000px; margin: 0 auto; padding: 24px 24px 60px; }
+  .summary { background: #fff; border: 1px solid #dde3ee; border-radius: 12px; padding: 14px 20px; margin-bottom: 18px; }
+  .summary li { margin: 3px 0; }
+  section { background: #fff; border: 1px solid #dde3ee; border-radius: 12px; padding: 20px 24px; margin: 18px 0; }
+  h2 { font-size: 20px; margin: 0 0 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  img { width: 100%; border: 1px solid #cfd7e6; border-radius: 8px; display: block; }
+  .proves { font-size: 16px; margin: 12px 0 4px; }
+  .pass, .fail { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; letter-spacing: .05em; }
+  .pass { background: #dcf5e4; color: #1e6b3a; }
+  .fail { background: #fde3e1; color: #b3261e; }
+  details { margin-top: 8px; color: #44516b; font-size: 14px; }
+  summary { cursor: pointer; color: #00356b; }
+  footer { color: #5d6a82; font-size: 13px; margin-top: 28px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>App Check: Campus Customs Concierge (Problem 11)</h1>
+  <p>Live site tested on October 22, 2026 at 11:29 AM · 5 of 5 checks passed</p>
+  <p>Front end http://localhost:5174 · FastAPI backend :8000 · PydanticAI agent · data/campus_customs.db</p>
+</header>
+<main>
+  <div class="summary">
+    <b>What was tested</b>
+    <ul>
+      <li>✅ 1. Chat checks an item's inventory (honest price and stock)</li><li>✅ 2. A category question fills the page with matching product cards</li><li>✅ 3a. Usability (Problem 9): the reply streams in as it's written</li><li>✅ 3b. Usability (Problem 9): the concierge adds an item to the cart</li><li>✅ 3c. The cart page shows what the concierge added</li>
+    </ul>
+    Every price and stock number in the captions was read from the database during the test run, not typed in by hand.
+  </div>
+  
+    <section>
+      <h2>1. Chat checks an item's inventory (honest price and stock) <span class="pass">PASS</span></h2>
+      <a href="app_check_images/inventory.png"><img src="app_check_images/inventory.png" alt="Concierge answering price and stock on the Fencing Left Chest Hoodie page"></a>
+      <p class="proves">On the Fencing Left Chest Hoodie page, the concierge quoted <b>$68.00</b>, said only <b>2 left in XL</b>, and said <b>L is sold out</b>, which matches the database exactly (catalogue price $68.00; inventory XL = 2, L = 0).</p>
+      <details><summary>Exact question and answer</summary><p><b>Shopper:</b> What does this cost, how many are left in XL, and is a L available?</p><p><b>Concierge:</b> The Fencing Left Chest Hoodie costs $68.00. There are only 2 left in XL, and L is sold out. S and M are also in stock—shall I add an XL to your cart?
+
+Shown on the page ↓</p></details>
+    </section>
+    <section>
+      <h2>2. A category question fills the page with matching product cards <span class="pass">PASS</span></h2>
+      <a href="app_check_images/category_search.png"><img src="app_check_images/category_search.png" alt="Concierge results section showing T-shirt cards with image, name, price, and short info"></a>
+      <p class="proves">Asking “Show me your T-shirts” made a <b>“T-SHIRTS”</b> section appear on the page with <b>12 product cards</b> (image, name, price, short info, sizes in stock). Every card is a T-shirt, and its price matches the database (12 of 25 T-shirts shown; 0 mismatches).</p>
+      <details><summary>Exact question and answer</summary><p><b>Shopper:</b> Show me your T-shirts</p><p><b>Concierge:</b> I&#x27;ve laid out 12 T-shirts on the page for you. Highlights include the Big Yale Tri-Blend T-Shirt in dusty coral for $32.00, the navy Boola Boola T-Shirt for $32.00, and the District Tri-Blend T-Shirt Vintage Shield for $32.00. Looking for a particular college, color, or size?
+
++8
+12 pieces shown on the page ↓</p></details>
+    </section>
+    <section>
+      <h2>3a. Usability (Problem 9): the reply streams in as it's written <span class="pass">PASS</span></h2>
+      <a href="app_check_images/streaming.png"><img src="app_check_images/streaming.png" alt="Chat panel mid-answer: a dashed draft notecard with the reply being written"></a>
+      <p class="proves">Mid-answer screenshot: the concierge showed “Looking up the details…” after 1.9s, then the reply began writing itself in the dashed draft bubble at 4.2s, before the final answer at 6.6s. Shoppers see progress instead of a silent wait.</p>
+      <details><summary>Exact question and answer</summary><p><b>Shopper:</b> Tell me about this hoodie and which sizes you have.</p><p><b>Concierge:</b> (captured mid-stream: 138 characters written so far)</p></details>
+    </section>
+    <section>
+      <h2>3b. Usability (Problem 9): the concierge adds an item to the cart <span class="pass">PASS</span></h2>
+      <a href="app_check_images/add_to_cart.png"><img src="app_check_images/add_to_cart.png" alt="Chat reply with a green &#x27;Added to cart&#x27; note and the cart badge showing 1"></a>
+      <p class="proves">Asked to “add one of these in M,” the concierge checked live stock (M = 15 in the database), added it, and showed a green <b>✓ Added to cart</b> note; the cart badge in the header changed to <b>1</b>.</p>
+      <details><summary>Exact question and answer</summary><p><b>Shopper:</b> Please add one of these in M to my cart.</p><p><b>Concierge:</b> Added one Fencing Left Chest Hoodie in M to your cart at $68.00. You can review it using the Cart button at the top of the page; it isn’t reserved or charged.
+
+✓ Added to cart: 1 × Fencing Left Chest Hoodie (M)
+
+View cart →
+Shown on the page ↓</p></details>
+    </section>
+    <section>
+      <h2>3c. The cart page shows what the concierge added <span class="pass">PASS</span></h2>
+      <a href="app_check_images/cart_page.png"><img src="app_check_images/cart_page.png" alt="Cart page with one Fencing Left Chest Hoodie and the subtotal"></a>
+      <p class="proves">Following “View cart,” the cart holds exactly <b>1 × Fencing Left Chest Hoodie (size M)</b> with a subtotal of <b>$68.00</b>, the database price, so the chat action really changed the shopper's cart.</p>
+      
+    </section>
+  <footer>
+    Generated by <code>scripts/app_check.py</code> (Playwright driving Google Chrome at 1280×800).
+    The test chatted as a guest, so nothing was saved to the database: <code>chat_messages</code> had 22 rows before
+    and 22 after. Click any screenshot to open it full size.
+  </footer>
+</main>
+</body>
+</html>

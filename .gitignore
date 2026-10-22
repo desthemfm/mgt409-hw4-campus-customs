@@ -1,0 +1,33 @@
+# ---- Secrets: never commit ----
+.env
+.env.*
+!.env.example
+
+# ---- Course data pack: local only (database, product photos, cleaned copies, backups) ----
+/data/
+/data.zip
+*.db
+*.db-journal
+*.sqlite
+
+# ---- Python ----
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# ---- Node / build output ----
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# ---- Audit trail side file (only created if audit_trail.json is ever damaged) ----
+output/audit_trail.unreadable-append.jsonl
+
+# ---- Editors / OS ----
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.log

@@ -1,0 +1,12 @@
+# Backend (FastAPI + PydanticAI). Install into a virtual environment:
+#   python3.12 -m venv backend/.venv && backend/.venv/bin/pip install -r requirements.txt
+fastapi
+uvicorn
+# Lets `uvicorn --reload` watch for edits efficiently (and skip the .venv folder)
+watchfiles
+# Accounts: Argon2id password hashing, signed session cookies, .env loading
+argon2-cffi
+itsdangerous
+python-dotenv
+# PydanticAI agent; [openai] covers OpenAI-compatible gateways like Portkey (not the full pydantic-ai package)
+pydantic-ai-slim[openai]

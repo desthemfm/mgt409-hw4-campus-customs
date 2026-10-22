@@ -1,15 +1,19 @@
 # Problem 9 - Usability Improvements
 
-We chose **two agent/backend improvements** (Option B). Both make the Bulldog Blue Concierge easier and more pleasant to use, without adding clutter to the page:
+Problem 9 asks for **two front-end and two agent/backend usability improvements**. We first read it as a choice of one pair or the other and built only the backend pair. A review caught this (Problem 14), and the front-end pair below was verified, extended where it fell short, and documented.
 
-1. **Streaming replies.** The answer appears as it's written, with live "what I'm doing" updates.
-2. **Add to cart from the chat.** The concierge can put a piece in the shopper's cart on request.
+| # | Type | Improvement | In one line |
+|---|---|---|---|
+| 1 | Backend | **Streaming replies** | The answer appears as it's written, with live "what I'm doing" updates |
+| 2 | Backend | **Cart actions from the chat** | The concierge can add, remove, or list cart items on request, never past stock |
+| 3 | Front end | **Game-Day Kit** | Three pieces for the stands, one size, one click, with live stock per piece |
+| 4 | Front end | **Shop your size** | Show only pieces in stock in my size; my size is remembered and preselected |
 
-Each section says **what we added**, **why it helps** the Campus Customs shopper and the business, **how it works**, and **how we tested it**.
+Each section says **what it adds**, **why it helps** the Campus Customs shopper and the business, **how it works**, and **how we tested it**. Screenshot evidence for all four is in `output/app_check.html` (checks 3a–3f).
 
 ---
 
-## 1. Streaming replies
+## 1. Streaming replies (backend)
 
 ### What we added
 
@@ -17,7 +21,9 @@ Before, after a shopper sent a message, the chat showed three bouncing dots for 
 
 1. **A live status line** appears as soon as the concierge starts working: "Searching the collection…", "Checking sizes and stock…", "Looking up the details…", "Looking back through our earlier chats…".
 2. **The reply writes itself word by word**, in a lighter, dashed "draft" bubble marked *Writing…*.
-3. When the answer is finished and has **passed the honesty check** (Problem 6), the draft is replaced by the final reply, and any matching product cards appear on the page.
+3. When the answer is finished and has **passed the answer check** (Problem 6), the draft is replaced by the final reply, and any matching product cards appear on the page.
+
+**Important limit:** the draft is shown **before** the answer check runs, and only the finished answer is checked. If the check rejects it, the draft is cleared ("Double-checking that answer…") and the rewritten, checked answer replaces it. So a wrong number could appear briefly in a draft, which is why the draft is styled as provisional (dashed, *Writing…*).
 
 ### Why it helps the shopper
 
@@ -29,7 +35,7 @@ Before, after a shopper sent a message, the chat showed three bouncing dots for 
 
 - **Fewer abandoned chats.** A silent 10-second wait is when shoppers give up and leave. Visible progress keeps them engaged long enough to see products and add them to the cart.
 - **It looks like a modern, premium service,** like the chat assistants shoppers already use, which suits the polished Bulldog Blue brand.
-- **No loss of accuracy.** The final text still goes through the same honesty check, the same product-card lookup from the database, and the same saving to `chat_messages` as before.
+- **The same final checks.** The final text still goes through the same answer check (not the draft), the same product-card lookup from the database, and the same saving to `chat_messages` as before.
 
 ### How it works
 
@@ -73,7 +79,7 @@ Before, after a shopper sent a message, the chat showed three bouncing dots for 
 
 ---
 
-## 2. Add to cart from the chat
+## 2. Cart actions from the chat (backend)
 
 ### What we added
 
@@ -157,3 +163,91 @@ The concierge checks live stock, changes the cart, and confirms in the chat with
 
 - **Cart page:** clicking **View cart →** in the chat showed exactly "Fencing Left Chest Hoodie, Size M · $68.00", subtotal $68.00.
 - **Status lines seen** during the test: "Checking sizes and stock…", "Adding it to your cart…", "Looking at your cart…", "Updating your cart…", "Searching the collection…".
+
+---
+
+## 3. Game-Day Kit (front end)
+
+### What it adds
+
+On the home page, **"The Game-Day Kit"** groups three pieces for the stands:
+- the 2025 Yale vs. Harvard T-Shirt, $32.00;
+- the Basic Hoodie Big Yale, $68.00;
+- the Super Heavyweight Crewneck Arched Yale Crest, $58.00.
+
+The shopper picks **one size**, and each piece immediately shows its **live stock in that size**: "In stock in XL," "Only 2 left in XL," or a crossed-out "Sold out in XL." **One button** adds every piece that's in stock in that size. A note says exactly what happened, for example "Added 3 of 3 in XL," or which piece was skipped and why. The total shown, $158.00, is the three database prices added up, with no invented discount.
+
+### Why it helps the shopper
+
+- **Three decisions become one.** Without the kit, gearing up for The Game means opening three product pages, picking a size three times, and pressing Add to Cart three times.
+- **No surprises at the cart.** Stock is shown per piece *before* adding, and a sold-out piece is skipped with an explanation instead of failing silently.
+
+### Why it helps Campus Customs (the business)
+
+- **Bigger baskets:** one click turns a single-item visit into a three-item basket, at the moment of peak rivalry interest.
+- **No overselling:** the kit adds at most what's in stock, counting what's already in the cart.
+
+### Is it a real usability improvement?
+
+Yes. It was built during the Problem 10 redesign, but it's a distinct interactive feature: its own size picker, live per-size stock for several products at once, a combined add, and honest partial-add handling. That's different from the product page's single-item Add to Cart.
+
+### How it works
+
+`frontend/src/components/GameDayKit.tsx`:
+- loads the three products' live details from `GET /api/products/{id}`;
+- takes the size from a dropdown;
+- calls the shared cart's `add()` once per piece, capped at that size's stock;
+- writes the note from what was actually added.
+
+The pieces are set in `frontend/src/gameDay.ts`.
+
+### How we tested it
+
+App check **3d** (Playwright, live site, `output/app_check_images/game_day_kit.png`):
+- In **XL**, the kit's stock labels were "In stock in XL," "Only 2 left in XL," and "In stock in XL," exactly matching the database.
+- One click added the 3 in-stock pieces (cart badge 3, cart contents checked), and the note read "Added 3 of 3 in XL."
+
+An earlier manual test (Problem 10) showed that once the cart held both XL Basic Hoodies in stock, the kit added only the other 2 pieces and named the skipped one.
+
+---
+
+## 4. Shop your size (front end)
+
+### What it adds
+
+- **"Your size" buttons on the Products page** (Any, XS, S, M, L, XL, XXL). Choosing one shows **only the pieces in stock in that size**, for example "77 of 102 pieces in stock in XL." Each card confirms it: "✓ XL in stock · also S, M, L, XXL." It works together with the category buttons, and both are kept in the URL (`/products?category=Hoodies&size=XL`), so the view can be shared and the Back button works.
+- **The size is remembered** in the browser. On any product page it's **preselected** when that size is in stock ("Size XL (your size): 25 in stock"), so Add to Cart is one click away. Picking a size on a product page updates the remembered size too.
+- If a size is remembered but not active, the Products page offers **"Show only my size (XL)."**
+
+### Why the existing stock display wasn't enough on its own
+
+Before this, cards already listed sizes in stock and a "last few" note. That was **display only**: a shopper who wears XL still had to read the size line on up to 102 cards, and couldn't act on it. It also arrived with the card and design work rather than as a feature shoppers use. "Shop your size" turns that stock data into something the shopper can act on.
+
+### Why it helps the shopper
+
+- **No dead ends:** they never open a product only to find their size is sold out.
+- **Less repetition:** they set their size once, not on every product page.
+- **Mobile-friendly:** filtering beats scrolling 102 cards on a phone.
+
+### Why it helps Campus Customs (the business)
+
+- **Shoppers reach buyable items faster**, which means fewer abandoned visits.
+- **It surfaces deep stock:** pieces with plenty left in a size get seen by the shoppers who can actually buy them.
+
+### How it works
+
+- `frontend/src/sizePreference.ts` stores the size in `localStorage` (`campus-customs-size`).
+- `Products.tsx` filters the live product list by each card's `sizes_in_stock`, which comes from the inventory table through `GET /api/products`.
+- `ProductCard.tsx` highlights the chosen size.
+- `ProductDetail.tsx` preselects the remembered size when it's in stock.
+
+No backend change was needed: the cards already carried live `sizes_in_stock`.
+
+### How we tested it
+
+App check **3e** and **3f** (Playwright, live site; `shop_your_size.png`, `shop_your_size_product.png`):
+- Choosing **XL** showed **77 of 102**, exactly the 77 products whose XL quantity is above 0 in the database.
+- Every card's size line started "✓ XL in stock."
+- The URL became `/products?size=XL`, and the remembered size was XL.
+- Opening a product with XL in stock showed **XL already selected**: "Size XL (your size): 25 in stock."
+

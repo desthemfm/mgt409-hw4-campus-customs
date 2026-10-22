@@ -118,6 +118,138 @@ def load_prompt() -> str:
 
 
 PRICE_RE = re.compile(r"\$\s?(\d{1,4}(?:,\d{3})*(?:\.\d{1,2})?)")
+# ---------- Price check: every $ amount must belong to the product it describes ----------
+#
+# How a quoted amount is judged (see price_problems):
+#   1. Find the product it describes: the nearest product name in the same sentence or bullet
+#      (before it, else after it), else the last product named earlier in the reply, else the
+#      product page the shopper has open, else the only product a tool returned.
+#   2. It's fine if it is that product's own price, OR a total with the quantity stated in the
+#      same sentence ("2 for $136.00"), OR the sum of the pieces named in that sentence or reply.
+#   3. Also fine anywhere: amounts the shopper typed ("under $70"), totals a cart tool calculated,
+#      and category min/max prices in a "from $X to $Y" style sentence.
+# If no product can be identified at all, the amount must at least be a price some tool returned.
+# Limits: it reads "$" amounts only, and matches product names as written in the catalogue
+# (a paraphrased name like "the hockey one" falls back to the last name mentioned).
+
+NUMBER_WORDS = {"one": 1, "single": 1, "two": 2, "pair": 2, "three": 3, "four": 4, "five": 5,
+                "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+SEGMENT_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+(?=[A-Z*\-•(\"“])|\n+")
+ABBREVIATION_RE = re.compile(r"\b(vs|Mr|Mrs|Ms|Dr|St|No|approx|e\.g|i\.e)\.", re.IGNORECASE)
+SIZE_TOKEN_RE = re.compile(r"\b(?:2XL|XXL|XL|XS|[SML])\b")
+RANGE_WORDS_RE = re.compile(r"\b(range|ranges|from|between|starting|start at|up to|to)\b", re.IGNORECASE)
+DIFFERENCE_WORDS_RE = re.compile(r"\b(less|more|cheaper|pricier|difference|differ|saves?|saving|extra|than)\b", re.IGNORECASE)
+TOTAL_WORDS_RE = re.compile(r"\b(total|totals|together|altogether|combined|come to|comes to|all three|all of them|the set|the kit|in all|for all)\b", re.IGNORECASE)
+
+
+def _name_pattern(name: str) -> re.Pattern:
+    words = re.findall(r"[a-z0-9]+", name.lower())
+    return re.compile(r"\b" + r"[^a-z0-9]{1,3}".join(map(re.escape, words)) + r"(?:e?s)?\b")
+
+
+def _quantities(text: str) -> set[int]:
+    found = {int(n) for n in re.findall(r"\b(\d{1,2})\s*(?:×|x\b|of\b|pieces?\b|items?\b|[a-z])", text.lower()) if 1 <= int(n) <= 10}
+    found |= {int(n) for n in re.findall(r"\b(\d{1,2})\b", text) if 1 <= int(n) <= 10}
+    found |= {n for w, n in NUMBER_WORDS.items() if re.search(rf"\b{w}\b", text.lower())}
+    return found
+
+
+def _is_mixed_total(amount: float, prices: list[float]) -> bool:
+    """True if amount = a combination of these unit prices, each bought 0-5 times (2+ pieces in all).
+    For totals like "two Basic Hoodies and one Boola tee come to $168.00"."""
+    prices = prices[:6]
+    def search(i: int, remaining: float, pieces: int) -> bool:
+        if abs(remaining) < 0.005:
+            return pieces >= 2
+        if i == len(prices) or remaining < 0:
+            return False
+        return any(search(i + 1, remaining - n * prices[i], pieces + n) for n in range(6))
+    return len(prices) >= 1 and search(0, amount, 0)
+
+
+def _money(x: float) -> str:
+    return f"${x:,.2f}"
+
+
+def price_problems(reply: str, deps: tools.AgentDeps) -> list[str]:
+    """Every problem with the $ amounts in a reply (empty list = all prices check out)."""
+    products = deps.seen_products  # product_id -> (name, unit price)
+    patterns = {pid: _name_pattern(name) for pid, (name, _) in products.items()}
+    unit_prices = set(deps.seen_prices)
+    page_pid = deps.page.product.product_id if deps.page and deps.page.product else None
+    text = reply.replace("**", "").replace("’", "'")
+    text = ABBREVIATION_RE.sub(r"\1", text)  # "vs." etc. don't end a sentence ("2025 Yale vs. Harvard T-Shirt")
+    segments = [seg for seg in SEGMENT_SPLIT_RE.split(text) if seg.strip()]
+
+    def mentions(seg: str) -> list[tuple[int, int, str]]:
+        found = []
+        for pid, pat in patterns.items():
+            found += [(m.start(), m.end(), pid) for m in pat.finditer(seg.lower())]
+        # keep the longest name where two overlap ("Yale Dad Hoodie" inside a longer name)
+        found.sort(key=lambda m: (m[0], -(m[1] - m[0])))
+        kept: list[tuple[int, int, str]] = []
+        for m in found:
+            if not kept or m[0] >= kept[-1][1]:
+                kept.append(m)
+        return kept
+
+    named_in_reply = {pid for seg in segments for _, _, pid in mentions(seg)}
+    problems: list[str] = []
+    last_named: str | None = None
+    for seg in segments:
+        seg_mentions = mentions(seg)
+        amounts = [(m.start(), round(float(m.group(1).replace(",", "")), 2)) for m in PRICE_RE.finditer(seg)]
+        if amounts:
+            stripped = PRICE_RE.sub(" ", seg)
+            for start, end, _ in sorted(seg_mentions, reverse=True):
+                stripped = stripped[:start] + " " + stripped[end:]
+            qtys = _quantities(SIZE_TOKEN_RE.sub(" ", stripped))
+            seg_pids = list(dict.fromkeys(pid for _, _, pid in seg_mentions))
+            for pos, amount in amounts:
+                if amount in deps.shopper_amounts or amount in deps.tool_totals:
+                    continue
+                before = [m for m in seg_mentions if m[1] <= pos]
+                after = [m for m in seg_mentions if m[0] >= pos]
+                pid = before[-1][2] if before else after[0][2] if after else last_named or (
+                    page_pid if page_pid in products else next(iter(products)) if len(products) == 1 else None)
+                if amount in deps.range_prices and (pid is None or RANGE_WORDS_RE.search(seg)):
+                    continue  # a category's lowest/highest price from list_categories
+                # a price difference between two pieces named in the reply ("$30.00 less than the jacket")
+                if DIFFERENCE_WORDS_RE.search(seg) and any(
+                    abs(amount - abs(products[a][1] - products[b][1])) < 0.005
+                    for a in named_in_reply for b in named_in_reply if a < b
+                ):
+                    continue
+                if pid is None:  # can't tell which product: it must at least be a real price
+                    if amount in unit_prices or any(abs(amount - n * u) < 0.005 for u in unit_prices for n in qtys if n >= 2):
+                        continue
+                    # "Together they come to $158.00", said before the pieces are named
+                    group = sorted(named_in_reply) if named_in_reply else sorted(products)
+                    if TOTAL_WORDS_RE.search(seg) and _is_mixed_total(amount, [products[g][1] for g in group]):
+                        continue
+                    problems.append(f"{_money(amount)} isn't a price any tool returned this turn.")
+                    continue
+                name, price = products[pid]
+                if abs(amount - price) < 0.005:
+                    continue
+                if any(n >= 2 and abs(amount - n * price) < 0.005 for n in qtys):
+                    continue
+                # Totals of several pieces count only when the sentence says it's a total ("together",
+                # "in total", "comes to"...), so "$100.00" can't pass as one piece's price because it
+                # happens to equal $68 + $32. Includes mixed quantities ("two hoodies and one tee").
+                if TOTAL_WORDS_RE.search(seg):
+                    group = seg_pids if len(seg_pids) >= 2 else sorted(named_in_reply)
+                    if _is_mixed_total(amount, [products[g][1] for g in (group or [pid])]):
+                        continue
+                problems.append(
+                    f"{_money(amount)} is quoted for the {name}, but its price is {_money(price)} each"
+                    + (" (a total needs its quantity stated, e.g. \"2 for ...\")." if amount > price else ".")
+                )
+        if seg_mentions:
+            last_named = seg_mentions[-1][2]
+    return problems
+
+
 # Numbers stated as stock: "only 2 left", "25 in stock", "15 available", "3 remaining".
 QUANTITY_RE = re.compile(
     r"\bonly\s+(?P<a>\d{1,4})\b"
@@ -288,14 +420,12 @@ def build_agent(model=None) -> Agent[tools.AgentDeps, ShopperReply]:
                 f"The reply states stock quantities {made_up_qty} that no tool returned in this turn. "
                 "Call get_product_info or check_size_stock, and quote only the quantities they return."
             )
-        quoted = {float(m.replace(",", "")) for m in PRICE_RE.findall(output.reply)}
-        allowed = {round(p * n, 2) for p in ctx.deps.seen_prices for n in range(1, 11)}  # a price, or a few of one item
-        allowed |= ctx.deps.shopper_amounts  # e.g. repeating the shopper's own "under $60" budget
-        made_up = sorted(q for q in quoted if round(q, 2) not in allowed)
-        if made_up:
+        problems = price_problems(output.reply, ctx.deps)
+        if problems:
             raise ModelRetry(
-                f"The reply quotes {', '.join(f'${q:g}' for q in made_up)}, which no tool returned. "
-                "Only quote prices from tool results; call a tool to look them up if needed."
+                "Some prices in the reply don't match the products they describe:\n- " + "\n- ".join(problems)
+                + "\nQuote each piece's own price_text right after its name. For a total, say the quantity "
+                "(e.g. \"2 for $136.00\") or name every piece it adds up."
             )
         return output
 
@@ -493,7 +623,7 @@ def is_content_filter(err: ModelHTTPError) -> bool:
 
 audit_log = logging.getLogger("campus_customs.audit")
 
-AUDIT_PATH = Path(os.getenv("AUDIT_TRAIL_PATH", Path(__file__).resolve().parent.parent / "output" / "audit_trail.json"))
+AUDIT_PATH = tools.env_path("AUDIT_TRAIL_PATH", tools.ROOT / "output" / "audit_trail.json")
 _lock = threading.Lock()  # one writer at a time inside this process; fcntl covers other processes
 
 

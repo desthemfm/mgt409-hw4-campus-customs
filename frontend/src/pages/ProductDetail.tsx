@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useCart } from '../cart'
+import { getPreferredSize, setPreferredSize } from '../sizePreference'
 import { fetchProduct, formatPrice, type SizeStock } from '../api'
 import { ErrorMessage, Loading } from '../components/StatusMessage'
 import { useAsync } from '../useAsync'
@@ -17,6 +18,12 @@ export default function ProductDetail() {
   const { productId = '' } = useParams()
   const { data: product, error, loading } = useAsync((signal) => fetchProduct(productId, signal), [productId])
   const [picked, setPicked] = useState<string | null>(null)
+  // "Shop your size": preselect the shopper's remembered size when it's in stock here.
+  useEffect(() => {
+    const preferred = getPreferredSize()
+    const inStock = product?.inventory.some((s) => s.size === preferred && s.quantity > 0)
+    setPicked(preferred && inStock ? preferred : null)
+  }, [product])
   const [qty, setQty] = useState(1)
   const [addedNote, setAddedNote] = useState('')
   const cart = useCart()
@@ -37,6 +44,7 @@ export default function ProductDetail() {
 
   function pickSize(size: string) {
     setPicked(size)
+    setPreferredSize(size) // remembered for the Products page size filter and other product pages
     setQty(1)
     setAddedNote('')
   }
@@ -99,7 +107,7 @@ export default function ProductDetail() {
               ))}
             </div>
             <p className="size-status" aria-live="polite">
-              {selected ? `Size ${selected.size}: ${stockLabel(selected)}` : 'Choose a size to see availability.'}
+              {selected ? `Size ${selected.size}${selected.size === getPreferredSize() ? ' (your size)' : ''}: ${stockLabel(selected)}` : 'Choose a size to see availability.'}
             </p>
           </fieldset>
 

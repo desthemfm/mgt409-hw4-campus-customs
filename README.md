@@ -31,12 +31,12 @@ hw4/
 │   ├── tools.py           # │ the agent: four files
 │   ├── models.py          # │
 │   ├── prompts/prompt.md  # ┘ (system prompt)
-│   └── tests/             # automated checks (tools, audit trail, safety rules)
+│   └── tests/             # automated checks (tools, price check, audit trail, safety rules)
 ├── scripts/               # optional helpers: photo cleanup, live-site app check
 └── output/
     ├── harness.md         # how the system works, and the build log
     ├── design.md          # Problem 10: the Game Day design
-    ├── usability.md       # Problem 9: streaming replies and add-to-cart from chat
+    ├── usability.md       # Problem 9: four usability improvements (2 backend, 2 front end)
     ├── app_check.html     # Problem 11: screenshot evidence (double-click to open)
     ├── app_check_images/  # screenshots linked from app_check.html
     └── audit_trail.json   # Problem 12: append-only log of agent runs
@@ -113,6 +113,8 @@ Open **http://localhost:5174**. The dev server forwards `/api` and `/media` to t
 ## Try it
 
 - **Browse:** the **Products** page, category chips, and single-item pages with live sizes and stock.
+- **Shop your size:** tap a size under "Your size" on the Products page to see only pieces in stock in it. Your size is then preselected on product pages.
+- **Game-Day Kit** (home page): pick a size and add all three pieces at once.
 - **Ask the concierge** (the pink button, bottom right):
   - "Show me your T-shirts": matching cards appear on the page.
   - "Is this in stock in XL?" on a product page.
@@ -126,6 +128,7 @@ From `backend/`, with the virtual environment active:
 | Command | What it checks | Cost |
 |---|---|---|
 | `python tests/test_tools.py` | All 102 products × 6 sizes: tool answers vs. the database | Free |
+| `python tests/test_validator.py` | The price check: wrong, swapped, and valid prices and totals | Free |
 | `python tests/test_audit.py` | The append-only audit trail (scripted stand-in model) | Free |
 | `python tests/test_safety.py` | The 12 safety rules, against the live AI | Small AI cost |
 
@@ -154,5 +157,10 @@ scripts/.venv/bin/python scripts/clean_product_images.py   # writes data/product
 - **Secrets:** they live only in `.env`, which is git-ignored. `.env.example` has placeholders only.
 - **Passwords:** stored as Argon2id hashes. Login uses a signed, HttpOnly session cookie, and repeated wrong passwords trigger a lockout.
 - **Limits on the concierge:** its tools can only read the catalogue and stock, the signed-in shopper's own profile and chats, and the browser cart. It can never read other users.
-- **Honesty checks:** code checks every price, stock number, and "added to cart" claim before a reply is shown.
+- **Answer checks (best effort):**
+  - code checks the concierge's **final** answer: each `$` price must match the product it describes (or be a total with the quantity stated), stated stock numbers must come from a lookup, and "added to cart" must be true;
+  - streamed drafts appear **before** this check and are replaced by the checked answer;
+  - prices written without a `$` aren't checked.
+
+  See `output/harness.md`, Part 1, section 7.
 - **Audit trail:** `output/audit_trail.json` records every agent run with no names or emails.

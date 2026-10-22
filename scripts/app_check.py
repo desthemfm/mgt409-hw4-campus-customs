@@ -173,14 +173,15 @@ def check_streaming(page: Page) -> dict:
     wait_for_answer(page)
     t_done = time.monotonic() - t0
     return {
-        "title": "3a. Usability (Problem 9): the reply streams in as it's written",
+        "title": "3a. Usability, backend (Problem 9): the reply streams in as it's written",
         "image": img,
         "alt": "Chat panel mid-answer: a dashed draft notecard with the reply being written",
         "passed": t_draft < t_done,
         "proves": (
             f"Mid-answer screenshot: the concierge showed “{html.escape(status)}” after {t_status:.1f}s, then the reply began "
             f"writing itself in the dashed draft bubble at {t_draft:.1f}s, before the final answer at {t_done:.1f}s. "
-            "Shoppers see progress instead of a silent wait."
+            "Shoppers see progress instead of a silent wait. The draft is shown before the answer check runs; "
+            "the checked final answer then replaces it."
         ),
         "question": "Tell me about this hoodie and which sizes you have.",
         "reply": f"(captured mid-stream: {draft_len} characters written so far)",
@@ -212,7 +213,7 @@ def check_add_to_cart(page: Page) -> tuple[dict, dict]:
 
     in_cart = len(lines) == 1 and p["name"] in lines[0] and f"Size {size}" in lines[0]
     chat_check = {
-        "title": "3b. Usability (Problem 9): the concierge adds an item to the cart",
+        "title": "3b. Usability, backend (Problem 9): the concierge adds an item to the cart",
         "image": img,
         "alt": "Chat reply with a green 'Added to cart' note and the cart badge showing 1",
         "passed": badge == "1" and has_note and p["name"] in note_text,
@@ -238,6 +239,102 @@ def check_add_to_cart(page: Page) -> tuple[dict, dict]:
         "details": {"lines": lines, "subtotal": subtotal},
     }
     return chat_check, cart_check
+
+
+KIT_IDS = ["2025-yale-vs-harvard-t-shirt", "basic-hoodie-big-yale", "super-heavyweight-crewneck-arched-yale-crest"]
+
+
+def check_game_day_kit(page: Page) -> dict:
+    size = "XL"
+    kit = [product(pid) for pid in KIT_IDS]
+    page.goto(SITE + "/", wait_until="networkidle")
+    page.evaluate("localStorage.removeItem('campus-customs-cart')")
+    page.reload(wait_until="networkidle")
+    page.wait_for_selector(".kit-item")
+    page.select_option("#kit-size", size)
+    labels = page.locator(".kit-stock").all_inner_texts()
+    expected = [f"Sold out in {size}" if p["stock"][size] == 0 else f"Only {p['stock'][size]} left in {size}" if p["stock"][size] <= 5
+                else f"In stock in {size}" for p in kit]
+    page.click(".kit-actions .btn")
+    page.wait_for_selector(".kit-note")
+    note = page.locator(".kit-note").inner_text()
+    cart = page.evaluate("JSON.parse(localStorage.getItem('campus-customs-cart') || '[]')")
+    in_stock = [p for p in kit if p["stock"][size] > 0]
+    added_ok = sorted((c["product_id"], c["size"], c["quantity"]) for c in cart) == sorted((p["id"], size, 1) for p in in_stock)
+    badge = page.locator(".cart-count").inner_text() if page.locator(".cart-count").count() else "0"
+    page.evaluate("window.scrollTo(0, document.getElementById('kit').offsetTop - 70)")
+    page.wait_for_timeout(400)
+    img = shoot(page, "game_day_kit.png")
+    total = sum(p["price"] for p in kit)
+    stock_list = "; ".join(f"{p['name']}: {p['stock'][size]}" for p in kit)
+    return {
+        "title": "3d. Usability, front end (Problem 9): the Game-Day Kit, three pieces in one size with one click",
+        "image": img,
+        "alt": "Game-Day Kit with three products, live stock in XL, and the confirmation after adding",
+        "passed": labels == expected and added_ok and badge == str(len(in_stock)),
+        "proves": (
+            f"Choosing <b>{size}</b> shows each piece's live stock in that size ({stock_list} in the database), "
+            f"and one click added the <b>{len(in_stock)} in-stock pieces</b> (cart badge {badge}). "
+            f"The {money(total)} total is the three database prices added up."
+        ),
+        "question": "", "reply": "",
+        "details": {"labels": labels, "expected": expected, "note": note, "cart": cart},
+    }
+
+
+def check_shop_your_size(page: Page) -> tuple[dict, dict]:
+    size = "XL"
+    with_size = {pid for (pid,) in db_rows("SELECT product_id FROM inventory WHERE size = ? AND quantity > 0", size)}
+    total = db_rows("SELECT COUNT(*) FROM catalogue")[0][0]
+    page.goto(SITE + "/products", wait_until="networkidle")
+    page.evaluate("localStorage.removeItem('campus-customs-size')")
+    page.reload(wait_until="networkidle")
+    page.wait_for_selector(".size-filter")
+    page.locator(".size-filter .chip", has_text=size).first.click()
+    page.wait_for_function("() => /in stock in XL/.test(document.querySelector('.result-count')?.innerText || '')")
+    count_text = page.locator(".result-count").inner_text()
+    cards = page.locator(".page .product-card")
+    shown = {cards.nth(i).get_attribute("href").rsplit("/", 1)[1] for i in range(cards.count())}
+    lines = page.locator(".page .product-card .card-sizes").all_inner_texts()
+    url = page.url
+    remembered = page.evaluate("localStorage.getItem('campus-customs-size')")
+    # show the size buttons and the cards' "✓ XL in stock" lines in one screenshot
+    page.evaluate("window.scrollTo(0, document.querySelector('.size-filter').getBoundingClientRect().top + window.scrollY - 82)")
+    page.wait_for_timeout(300)
+    img = shoot(page, "shop_your_size.png")
+
+    # open a product that has XL in stock: the size should already be chosen
+    pid = sorted(with_size)[0]
+    page.goto(f"{SITE}/products/{pid}", wait_until="networkidle")
+    page.wait_for_selector(".size-btn")
+    picked = page.locator(".size-btn.picked .size-name").all_inner_texts()
+    status = page.locator(".size-status").inner_text()
+    img2 = shoot(page, "shop_your_size_product.png")
+    filter_check = {
+        "title": "3e. Usability, front end (Problem 9): Shop your size, showing only pieces in stock in my size",
+        "image": img,
+        "alt": "Products page filtered to pieces in stock in XL, each card confirming XL is in stock",
+        "passed": shown == with_size and all(l.startswith(f"✓ {size} in stock") for l in lines) and remembered == size and "size=XL" in url,
+        "proves": (
+            f"Tapping <b>{size}</b> under “Your size” shows <b>{len(shown)} of {total}</b> pieces (“{html.escape(count_text)}”), exactly the "
+            f"{len(with_size)} products with {size} stock above 0 in the database, and every card confirms “✓ {size} in stock”."
+        ),
+        "question": "", "reply": "",
+        "details": {"shown": len(shown), "db": len(with_size), "url": url, "remembered": remembered},
+    }
+    preselect_check = {
+        "title": "3f. Shop your size: the size is remembered and preselected on product pages",
+        "image": img2,
+        "alt": "Product page with XL already selected and marked as your size",
+        "passed": picked == [size] and "(your size)" in status,
+        "proves": (
+            f"After choosing {size} on the Products page, opening the {html.escape(product(pid)['name'])} already has <b>{size}</b> selected: "
+            f"“{html.escape(status)}”. The shopper doesn't have to pick their size again."
+        ),
+        "question": "", "reply": "",
+        "details": {"picked": picked, "status": status},
+    }
+    return filter_check, preselect_check
 
 
 # ---------- the report ----------
@@ -325,6 +422,10 @@ def main() -> None:
         results.append(check_streaming(page))
         page = browser.new_page(viewport=VIEWPORT, device_scale_factor=1)
         results.extend(check_add_to_cart(page))
+        page = browser.new_page(viewport=VIEWPORT, device_scale_factor=1)
+        results.append(check_game_day_kit(page))
+        page = browser.new_page(viewport=VIEWPORT, device_scale_factor=1)
+        results.extend(check_shop_your_size(page))
         browser.close()
     meta = {"when": datetime.now().strftime("%B %d, %Y at %I:%M %p").replace(" 0", " "), "rows_before": rows_before, "rows_after": chat_rows()}
     out = write_report(results, meta)

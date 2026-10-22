@@ -280,3 +280,7 @@ h2 { font-size: clamp(2rem, 4vw, 3rem); }
   .product-card, .category-tile, .kit-item { transition: none; }
   .product-card:hover, .category-tile:hover, .kit-item:hover { transform: none; }
 }
+
+/* Shop your size */
+.size-filter-label { color: var(--score); }
+.size-filter .chip.active { background: var(--score); border-color: var(--score); color: var(--night); }

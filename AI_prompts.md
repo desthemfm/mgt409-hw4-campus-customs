@@ -272,3 +272,17 @@ Yes, this is problem 13: push to GitHub and submit the URL. Push it to a public 
 ```
 
 (I also attached a screenshot of the expected file layout: AI_prompts.md, requirements.txt, .env.example, .gitignore, README.md, frontend/, backend/ with main.py and the four agent files, and output/ with harness.md, design.md, usability.md, app_check.html, app_check_images/, and audit_trail.json; the data/ pack stays local-only.)
+
+## Problem 14 - Review Fixes
+
+### Main prompt
+
+```text
+I reviewed and found three issues. Please fix these in my existing project while preserving the current design and working features.
+
+1. Fresh-install startup failure: `.env.example` includes `CAMPUS_DB_PATH=`. In `backend/tools.py`, the empty value becomes `Path("")` instead of falling back to `data/campus_customs.db`, causing “unable to open database file.” Make both missing and blank settings use the correct project-relative default. Verify that following the README with a fresh course data pack works.
+2. Problem 9 requires four improvements: We interpreted it as choosing two front-end OR two backend improvements, but it requires two of each. Keep streaming replies and chat-based cart actions as the two backend improvements. Inspect the existing Game-Day Kit and stock-aware product presentation as possible distinct front-end improvements. Verify they work and document all four in `output/usability.md`, explaining what each adds and why it helps shoppers or the business. If either candidate is insufficient, explain why and implement an appropriate improvement. Update the relevant screenshot evidence and harness so they agree with the app.
+3. Price-validation gap: A controlled test showed that the honesty validator accepts “One Fencing Left Chest Hoodie costs $136.00” even though its database price is $68. The validator currently allows multiples of observed prices without tying them to a product and quantity. Fix this so a unit price must match that product’s actual price, while legitimate multi-item totals remain valid. Add targeted regression checks for incorrect unit prices, swapped product prices, and valid totals. Also correct documentation that overstates what the validator guarantees, including whether streamed drafts are displayed before validation.
+
+Please explain the fixes in plain English, run the relevant checks, and update `AI_prompts.md` with this actual prompt and any follow-ups without inventing previous prompts or test results. Keep secrets, databases, and product images out of GitHub. When finished, report what changed, what passed, and any remaining limitations. Commit and push the fixes to the existing repository, but do not submit anything on Canvas.
+```

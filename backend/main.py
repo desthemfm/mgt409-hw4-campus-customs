@@ -208,7 +208,7 @@ async def lifespan(_: FastAPI):
     2. Saved chats are always read per shopper, newest first, so an index on (user_id, id)
        keeps reloading history fast as it grows.
     """
-    if not tools.DB_PATH.exists():
+    if not tools.DB_PATH.is_file():
         raise RuntimeError(f"Database not found at {tools.DB_PATH}. Unzip the course data pack into data/ (see README.md).")
     if tools.prepare_database():
         log.warning("Prepared the data pack database (Problem 2 cleanup applied).")
@@ -234,7 +234,7 @@ app.add_middleware(
     session_cookie="cc_session",
     max_age=7 * 24 * 60 * 60,  # one week
     same_site="lax",
-    https_only=os.getenv("COOKIE_SECURE", "false").lower() == "true",
+    https_only=tools.env_setting("COOKIE_SECURE", "false").lower() == "true",
 )
 
 # 5 wrong passwords for one email (or 20 from one network address) means a 15-minute wait.

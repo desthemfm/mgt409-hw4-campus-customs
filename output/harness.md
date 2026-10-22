@@ -59,7 +59,13 @@ FastAPI (backend/main.py, port 8000) ── accounts, products, images, chat rou
 3. **Agent run** (`agent.run_chat`):
    - **Context:** the system prompt (re-read from `prompts/prompt.md` on every message) and a **"Right now"** briefing (who is chatting and what they're looking at) go to `gpt-6-astra`.
    - **Tools:** the agent calls tools as needed. While it works, the website gets live status lines ("Checking sizes and stock…") and the reply text as it streams in.
-4. **Honesty check** (`@agent.output_validator`). Before the shopper sees anything, code checks that every **$ amount**, **stock number**, **product card**, and "**added to your cart**" claim came from a tool in this turn, and that any **sold-out** size is actually mentioned. If not, the model must rewrite (up to 2 times).
+4. **Answer check** (`@agent.output_validator`, run on the agent's final answer).
+   - **Prices:** each `$` amount must belong to the product it's next to, as that product's own price, a total with the quantity stated ("2 for $136.00"), or the sum of named pieces in a sentence that says it's a total.
+   - **Stock numbers:** "only N left," "N in stock," and similar must be quantities a tool returned this turn.
+   - **Cards and cart claims:** product cards only for products a tool returned, and no "added to your cart" unless `add_to_cart` really added it.
+   - **Sold out:** a sold-out size a tool reported must be mentioned.
+   - **If a check fails,** the model must rewrite (up to 2 times).
+   - **What it can't do:** see "What the answer check does and doesn't guarantee" in section 7. **While streaming, the shopper sees the draft before this check runs;** the checked final answer then replaces it.
 5. **Finish** (`main.finish_chat`):
    - **Product cards:** the agent's product ids become **live `ProductCard`s from the database**, so no AI-written price reaches the screen.
    - **Saving:** signed-in exchanges are saved to `chat_messages` (two rows, in one transaction).
@@ -214,7 +220,7 @@ All structured types are Pydantic models. The website's TypeScript types (`front
 
 | Protection | How |
 |---|---|
-| Honest numbers | The output validator rejects any $ amount, stock number, product card, or "added to cart" claim no tool returned this turn, and requires sold-out sizes to be said |
+| Honest numbers (best effort) | The answer check ties each `$` amount to the product it describes (own price, a stated-quantity total, or a total of named pieces), requires stated stock numbers to come from a tool this turn, allows cards only for tool-returned products, blocks false "added to cart" claims, and requires sold-out sizes to be mentioned. Limits below |
 | Live prices on cards | Cards are rebuilt from the database; the AI only names product ids |
 | No account access | No tool reads `users`; the profile and recall tools are scoped to the session's user id, with no parameter to choose a user |
 | Identity can't be faked | `Shopper` comes only from the signed, HttpOnly session cookie |
@@ -227,6 +233,21 @@ All structured types are Pydantic models. The website's TypeScript types (`front
 | Accountability | An append-only audit trail of every run, with no personal details |
 
 **Tested:** all 12 rules pass on the live agent (`backend/tests/test_safety.py`). See Part 2, Problem 12.
+
+### What the answer check does and doesn't guarantee
+
+**What is guaranteed by code:**
+- **Product cards** show database prices (they're rebuilt from the database).
+- **Cart changes** never exceed stock.
+- **Prices written with a `$`** next to a product must be that product's own price, or a total that matches the quantity stated or the pieces named. Totals must be phrased as totals. Regression checks: `backend/tests/test_validator.py`.
+
+**What it does *not* guarantee:**
+- **Streamed drafts are shown before the check.** In the chat panel the reply streams in as a dashed "draft" while the model writes it. The check runs only on the finished answer. If it rejects the answer, the draft is cleared ("Double-checking that answer…") and the rewritten, checked answer replaces it. So a wrong number could be visible for a few seconds in a draft. It is never kept as the final answer while the check catches it.
+- **Prices not written with a `$`** ("sixty-eight dollars," "68 bucks") aren't read.
+- **Paraphrased product names** ("the hockey one") aren't matched. Their prices are compared with the last product named, or the page's product; if there's none, any real price from this turn is accepted.
+- **Stock claims without a number** ("plenty left," "lots of sizes") and quantities phrased other ways aren't checked. The sold-out rule only checks that *a* sold-out phrase appears.
+- **A total next to a stock count** could pass: "only 2 left… $136.00" reads 2 as a quantity.
+- **If every rewrite still fails,** the shopper sees "Our concierge is momentarily unavailable." This happened once in testing (a mixed-quantity total) before the check learned that case.
 
 ## 8. Data and storage
 
@@ -256,6 +277,8 @@ All structured types are Pydantic models. The website's TypeScript types (`front
 | Component or file | Role |
 |---|---|
 | `ChatWidget.tsx` | The floating concierge: streaming, saved history, page context, cart actions |
+| `GameDayKit.tsx` | Problem 9 front end: three pieces in one size, one click, live stock per size, never oversells |
+| `sizePreference.ts`, `Products.tsx`, `ProductDetail.tsx` | Problem 9 front end, **Shop your size**: a size filter on the Products page, the size remembered in this browser and preselected on product pages |
 | `ConciergeResults.tsx` | Chat results shown on the page; folds to a slim bar on product pages |
 | `ProductCard.tsx` | The product tile everywhere |
 | `api.ts`, `chat.ts`, `auth.tsx`, `cart.tsx`, `chatResults.tsx` | Typed API calls and shared state |
@@ -298,9 +321,10 @@ The full step-by-step guide is in **`README.md`**. In short:
 | Test | Command | Result |
 |---|---|---|
 | Tools vs. database (free) | `python tests/test_tools.py` (in `backend/`) | **3,314 / 3,314**: every price, quantity, and stock label for all 102 products × 6 sizes |
+| Price check (free) | `python tests/test_validator.py` | **33 / 33**: wrong unit prices, swapped prices, wrong totals and differences rejected; correct prices, stated-quantity totals, mixed-quantity and kit totals, differences, budgets, cart subtotals, and category ranges accepted |
 | Audit trail (free; scripted stand-in model) | `python tests/test_audit.py` | **12 / 12**: tool steps, honesty retry, usage limit, content filter (refusal and care reply), append-only |
 | Safety rules (live AI) | `python tests/test_safety.py` | **12 / 12** rules pass on gpt-6-astra |
-| Live site with screenshots | `scripts/.venv/bin/python scripts/app_check.py` | **5 / 5**: report at `output/app_check.html` |
+| Live site with screenshots | `scripts/.venv/bin/python scripts/app_check.py` | **8 / 8**: report at `output/app_check.html` (inventory, category cards, all four Problem 9 improvements) |
 | Build | `npm run build` (in `frontend/`) | Type-checks and builds |
 
 ## 12. Known limitations
@@ -308,6 +332,8 @@ The full step-by-step guide is in **`README.md`**. In short:
 - **The cart** lives in the browser (`localStorage`) and isn't tied to an account. **Checkout** isn't available.
 - **Rate limiters** are in memory, so they reset on restart. A multi-server deployment would need a shared store.
 - **The keyword search** handles synonyms and color families, but not meaning-based ("semantic") search.
+- **The answer check is best effort.** See section 7, "What the answer check does and doesn't guarantee." In particular, streamed drafts are visible before the check runs.
+- **Shop your size** is remembered per browser (`localStorage`), not per account.
 - **Test checks are simple:** `tests/test_safety.py` uses keyword checks, so answers should still be read. Two early "failures" were over-strict checks on correct refusals.
 - **Kickoff date:** the Game Day kickoff (Nov 21, 2026, 12:00 PM ET) is a setting confirmed by the site owner, not live data.
 - **The audit trail grows forever** (append-only by design). Archiving it would be a separate, deliberate step.
@@ -715,7 +741,8 @@ Uvicorn runs `backend/main.py`, and the agent lives in four files next to it, th
 - **Per-chat context** (`@agent.instructions`): whether the shopper is signed in and their first name, plus the product page they're viewing.
 - **Honesty check on every answer** (`@agent.output_validator`):
   - Tools record every product id and price the agent actually saw (`AgentDeps.seen_product_ids` / `seen_prices`).
-  - Before the shopper sees a reply, the validator rejects it if it shows a card for a product no tool returned, or quotes a **$ amount that no tool returned**. A multiple of a real price, like "2 for $136", is allowed.
+  - The validator rejects a final answer if it shows a card for a product no tool returned, or quotes a **$ amount that no tool returned**. A multiple of a real price, like "2 for $136", is allowed.
+  - *Corrected in Problem 14: that multiple rule wasn't tied to a product or quantity, so "One Fencing Left Chest Hoodie costs $136.00" passed. Prices are now checked per product. Also, once streaming arrived (Problem 9), drafts are shown before this check runs.*
   - A rejected reply goes back to the model (`ModelRetry`) to fix, up to 2 tries. This turns the prompt's honesty rule into code.
 - **Cost and loop limits:**
   - each message gets at most 8 model calls and 10 tool calls (`UsageLimits`);
@@ -867,7 +894,7 @@ uvicorn main:app --reload --port 8000
 
 ## Problem 6 - Tools: Product Info and Stock
 
-**Goal:** the concierge answers description, price, and stock-by-size questions **only** from `data/campus_customs.db`. It can't invent a price or a quantity, and it says so plainly when a size is sold out.
+**Goal:** the concierge answers description, price, and stock-by-size questions **only** from `data/campus_customs.db`, and says so plainly when a size is sold out. The answer check makes inventing a price or quantity much harder, but it isn't a guarantee (see Part 1, section 7, and the Problem 14 correction).
 
 ### The tools
 
@@ -912,9 +939,9 @@ Tool results are Pydantic models, so PydanticAI sends the model a JSON schema th
 
 ### Making "no invented prices or quantities" a rule the code enforces
 
-Each tool records what it returned in this chat turn on `AgentDeps`: `seen_product_ids`, `seen_prices`, `seen_quantities`, and `sold_out_checks`. Before any reply reaches the shopper, the `@agent.output_validator` in `agent.py` checks it:
+Each tool records what it returned in this chat turn on `AgentDeps`: `seen_product_ids`, `seen_prices`, `seen_quantities`, and `sold_out_checks`. The `@agent.output_validator` in `agent.py` checks the agent's final answer (with streaming, added in Problem 9, the shopper sees the draft first):
 
-1. **Prices:** every `$` amount must be a price a tool returned (or a small multiple, such as "2 for $136").
+1. **Prices:** every `$` amount must be a price a tool returned (or a small multiple, such as "2 for $136"). *Corrected in Problem 14: the multiple wasn't tied to a product or quantity, so a wrong unit price could pass. Now each amount is checked against the product it's next to.*
 2. **Quantities:** every stated stock number ("only 2 left," "25 in stock," "15 available") must be a quantity a tool returned **this turn**. This forces a fresh lookup instead of reusing the chat history.
 3. **Sold out:** if `check_size_stock` reported a sold-out size, the reply must actually say "sold out" (or "out of stock" or "unavailable").
 4. **Product cards:** only for products a tool returned.
@@ -1283,12 +1310,21 @@ Deliberately left out:
 
 ## Problem 9 - Usability Improvements
 
-We chose **Option B: two agent/backend improvements.** The full write-up (what we added, why it helps the shopper and Campus Customs, how it works, and test evidence) is in **`output/usability.md`**. Technical summary:
+Problem 9 requires **two front-end and two agent/backend improvements**. We first read it as a choice between two front-end *or* two backend improvements and built only the backend pair. This was corrected in **Problem 14**: the backend pair stays, and two front-end improvements were verified and documented (one of them extended).
+
+| | Improvement | Where |
+|---|---|---|
+| Backend 1 | Streaming replies | `POST /api/chat/stream`, `agent.ReplyStreamer` |
+| Backend 2 | Add, remove, or view the cart from the chat | cart tools in `tools.py`, `ChatReply.cart_actions` |
+| Front end 1 | **Game-Day Kit:** three pieces in one size, one click, live stock per size | `GameDayKit.tsx` (built in Problem 10, verified for Problem 9) |
+| Front end 2 | **Shop your size:** size filter, remembered size, preselected on product pages | `Products.tsx`, `sizePreference.ts`, `ProductDetail.tsx` (added in Problem 14 on top of the stock-aware cards) |
+
+The full write-up (what each adds, why it helps the shopper and Campus Customs, how it works, and evidence) is in **`output/usability.md`**. Technical summary of the backend pair:
 
 ### 1. Streaming replies
 
 - **New route:** `POST /api/chat/stream` returns NDJSON events: `status`, `delta` (the reply so far), `reset`, `done` (a full `ChatReply`), and `error`. The original `/api/chat` is kept.
-- **How the stream is produced:** `agent.run_chat(..., on_event=...)` passes PydanticAI an `event_stream_handler`. `ReplyStreamer` turns tool calls into status lines and reads the streamed `final_result` JSON with `pydantic_core.from_json(..., allow_partial="trailing-strings")`, so the reply text shows while it's still being written. The run is a normal `agent.run()`, so the honesty check and its retries still decide the final text.
+- **How the stream is produced:** `agent.run_chat(..., on_event=...)` passes PydanticAI an `event_stream_handler`. `ReplyStreamer` turns tool calls into status lines and reads the streamed `final_result` JSON with `pydantic_core.from_json(..., allow_partial="trailing-strings")`, so the reply text shows while it's still being written. The run is a normal `agent.run()`, so the honesty check and its retries still decide the final text. **The draft is shown before that check runs**; a rejected draft is cleared and replaced by the checked answer.
 - **Shared code:** `main.py` now has `prepare_chat()` and `finish_chat()`, shared by both routes. Streaming opens its own database connection for saving.
 - **Gateway cache fix:** `tools.make_model()` sends `x-portkey-cache-force-refresh: true`. Cached gateway replies had placeholder ids that Azure rejected, and could have repeated old stock.
 - **Frontend:** `sendChatMessage()` reads the stream; `ChatWidget` shows dots plus a status line, then a dashed draft (*Writing…*), then the final answer.
@@ -1482,4 +1518,85 @@ All 12 rules suggested in this problem were added to `prompts/prompt.md` as **se
 - **The fix:** `tools.prepare_database()` runs at server startup and applies that cleanup once.
 - **Verified:** on a fresh copy from `data.zip`, the result matched our cleaned database **exactly (0 of 102 products differ)**, and a second run changed nothing.
 - **Sample users:** their legacy password setting (PBKDF2, 120,000 iterations, from the course materials) is now the default, so the test user can log in without extra setup.
+
+## Problem 14 - Review Fixes
+
+A review found three issues. What we changed and verified:
+
+### 1. A blank setting broke a fresh install
+
+- **The problem:** `.env.example` contains `CAMPUS_DB_PATH=`. `os.getenv(name, default)` only uses the default when a setting is *missing*, not when it's *blank*, so the path became `Path("")` and startup failed with "unable to open database file."
+  - We reproduced this by following the README in a fresh clone.
+  - The startup check hadn't caught it because `Path("")` means the current folder, which "exists."
+  - The same pattern affected `AUDIT_TRAIL_PATH`, `PORTKEY_BASE_URL`, `OPENAI_MODEL`, and `COOKIE_SECURE`.
+- **The fix:** `tools.env_setting()` and `tools.env_path()` treat a blank setting like a missing one; relative paths resolve from the project folder; and startup checks `DB_PATH.is_file()`.
+- **Verified:** blank, missing, and whitespace values all give `data/campus_customs.db`. The full README walkthrough on a fresh clone and a fresh data pack passes (below).
+
+### 2. Problem 9 needed two front-end improvements as well
+
+- **Kept:** the two backend improvements (streaming replies, cart actions from the chat).
+- **Game-Day Kit, front end 1: sufficient.** It's a distinct interactive feature: a size picker, live stock per piece in that size, a one-click add of all in-stock pieces, and a plain note when a piece is skipped (never oversold).
+- **Stock-aware product presentation: insufficient on its own.** It was display only: sizes in stock and a "last few" note on each card. A shopper with a particular size still had to read every card, and couldn't act on it.
+  - **Extended into "Shop your size," front end 2:** "Your size" buttons on the Products page show only pieces in stock in that size (combinable with categories, kept in the URL), and cards confirm "✓ XL in stock · also …".
+  - The size is remembered in the browser and **preselected on product pages** ("Size XL (your size): 25 in stock").
+- **Verified** in `output/app_check.html` (8 / 8):
+  - the kit in XL showed live stock matching the database and added exactly the 3 in-stock pieces;
+  - XL showed **77 of 102**, exactly the database count of products with XL stock above 0, and every card confirmed XL;
+  - a product page opened with XL preselected.
+
+### 3. The price check wasn't tied to products
+
+- **The problem:** the old check allowed any `$` amount that equaled a seen price times 1–10, anywhere in the reply. So "One Fencing Left Chest Hoodie costs $136.00" (= 2 × $68) passed, and prices could be swapped between products.
+- **The fix:** `agent.price_problems()` ties each amount to the product it describes:
+  1. **Which product:** the nearest name in the same sentence or bullet (before the amount, else after it); else the last product named; else the open product page; else the only product seen.
+  2. **What's allowed:** that product's own price; a total with the quantity stated ("2 for $136.00"); or, in a sentence that says it's a total, a combination of the named pieces' own prices (each 0–5 times), which covers kit totals and mixed totals like "two Basic Hoodies and one Boola tee come to $168.00 in total."
+  3. **Also accepted:** shopper-typed amounts, cart totals computed by a tool, category min/max prices, and differences between two named pieces ("$36.00 less").
+- **Tools now record** each product's name with its price (`AgentDeps.seen_products`), and keep tool totals and category ranges separate from unit prices.
+- **Prompt:** "quote each price right after the piece's name, and phrase totals as totals with quantities."
+- **Regression checks:** `backend/tests/test_validator.py` has **33 cases, 33 passed**. Rejected as they should be:
+  - the review case;
+  - a wrong unit price;
+  - a made-up price;
+  - swapped prices (in one sentence and in a list);
+  - another product's price;
+  - wrong totals for the stated quantity;
+  - a wrong mixed total;
+  - a unit price that only works as a sum of other pieces ($100 = $68 + $32);
+  - a wrong price difference.
+
+  All the valid forms listed above are accepted.
+- **Live check** (gpt-6-astra, 8 price-heavy chats after the final changes): **0 errors, 2 rewrites**, both on correct statements the check didn't yet know (a price difference, and a category price without "from…to" wording). Both are now accepted and covered by tests. An earlier version rejected a correct mixed total three times, so the shopper would have seen an error; that's why mixed totals were added.
+- **Documentation corrected:** the harness, `usability.md`, and the README no longer say the check runs "before the shopper sees anything" or that invented prices are impossible. Section 7 lists what it does and doesn't guarantee, including that **streamed drafts are visible before the check runs**.
+
+### Checks run for Problem 14
+
+| Check | Result |
+|---|---|
+| `tests/test_validator.py` | 33 / 33 |
+| `tests/test_tools.py` | 3,314 / 3,314 |
+| `tests/test_audit.py` | 12 / 12 |
+| `scripts/app_check.py` (live site) | 8 / 8 |
+| Fresh clone + `.env.example` + fresh data pack, following the README | Pass (details below) |
+
+### Fresh-install check (following the README)
+
+The goal was to show that a new user can follow the README and get a working app. Steps:
+- **Clean copy:** only the files git publishes, so no `data/`, database, `.env` or `.venv`.
+- **Data pack:** the course `data.zip`, unzipped into `data/` (102 product photos).
+- **Settings:** `.env` copied from `.env.example`. Only `PORTKEY_API_KEY` and `SESSION_SECRET` were filled in; `CAMPUS_DB_PATH=` was left **blank**.
+- **Install:** `python3.12 -m venv backend/.venv` and `pip install -r requirements.txt`.
+- **Run:** `uvicorn main:app --reload` from `backend/`, on a spare port (8012).
+
+| What was checked | Result |
+|---|---|
+| Startup | Clean: "Prepared the data pack database (Problem 2 cleanup applied)". Before the fix this crashed with "unable to open database file" |
+| Database used | `data/campus_customs.db`, with all 102 products given a category |
+| `/api/health`, `/api/categories`, `/api/products` | `ok`; category counts; 102 products |
+| A product photo | 200, `image/jpeg` |
+| Sample-user login, then `/api/auth/me` | 200; Test User |
+| Live streamed chat ("How much is the Fencing Left Chest Hoodie, and is it in stock in XL?") | "$68.00 … in stock in XL, only 2 left", matching the database. The audit trail shows the model as `gpt-6-astra-global` |
+| `test_validator` / `test_tools` / `test_audit` in the fresh copy | 33/33, 3,314/3,314, 12/12 |
+| Front end: `npm ci`, `npm run build`, `npm run lint` | Build OK; lint 0 errors (2 style warnings about state set in an effect) |
+
+The server's process group was then stopped, and the port confirmed free.
 

@@ -321,3 +321,8 @@ main { flex: 1; }
   .product-grid { gap: 1.25rem 1rem; }
 }
 
+/* Shop your size (Problem 9 front-end improvement) */
+.size-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: -0.5rem 0 1.5rem; }
+.size-filter-label { font-weight: 700; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; margin-right: 0.25rem; }
+.size-filter .chip { min-width: 2.8rem; text-align: center; padding: 0.35rem 0.8rem; }
+.size-filter .link-btn { margin-left: 0.5rem; }

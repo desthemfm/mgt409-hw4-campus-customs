@@ -47,9 +47,26 @@ from models import (
     StockStatus,
 )
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent  # the project folder
 DATA_DIR = ROOT / "data"
-DB_PATH = Path(os.getenv("CAMPUS_DB_PATH", DATA_DIR / "campus_customs.db"))
+
+
+def env_setting(name: str, default: str) -> str:
+    """A setting from .env. A blank value (e.g. `CAMPUS_DB_PATH=`) counts as not set and uses the default."""
+    value = (os.getenv(name) or "").strip()
+    return value or default
+
+
+def env_path(name: str, default: Path) -> Path:
+    """A file path from .env, or the default when missing or blank. Relative paths are from the project folder."""
+    value = (os.getenv(name) or "").strip()
+    if not value:
+        return default
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+DB_PATH = env_path("CAMPUS_DB_PATH", DATA_DIR / "campus_customs.db")
 
 SIZE_ORDER = ["XS", "S", "M", "L", "XL", "XXL"]
 SIZE_RANK_SQL = "CASE size " + " ".join(f"WHEN '{s}' THEN {i}" for i, s in enumerate(SIZE_ORDER)) + " END"
@@ -63,8 +80,8 @@ def load_model_settings() -> tuple[str, str, str]:
     api_key = os.getenv("PORTKEY_API_KEY")
     if not api_key:
         raise RuntimeError("PORTKEY_API_KEY is not set. Add it to backend/.env (see .env.example).")
-    base_url = os.getenv("PORTKEY_BASE_URL", "https://api.portkey.ai/v1")
-    model = os.getenv("OPENAI_MODEL", "gpt-6-astra")
+    base_url = env_setting("PORTKEY_BASE_URL", "https://api.portkey.ai/v1")
+    model = env_setting("OPENAI_MODEL", "gpt-6-astra")
     return api_key, base_url, model
 
 
@@ -137,16 +154,23 @@ class AgentDeps:
     # seen in this chat turn. agent.py checks the final reply against these, so the reply can
     # only quote real prices and quantities from the database.
     seen_product_ids: set[str] = field(default_factory=set)
-    seen_prices: set[float] = field(default_factory=set)
+    seen_prices: set[float] = field(default_factory=set)  # unit prices seen this turn (any product)
+    # product_id -> (name, unit price): lets the answer check tie each quoted price to its product.
+    seen_products: dict[str, tuple[str, float]] = field(default_factory=dict)
+    # Amounts a tool calculated itself (cart line totals and subtotals): fine to quote as-is.
+    tool_totals: set[float] = field(default_factory=set)
+    # Category price ranges from list_categories: fine in "from $X to $Y" sentences.
+    range_prices: set[float] = field(default_factory=set)
     seen_quantities: set[int] = field(default_factory=set)
     # Dollar amounts the shopper typed ("under $60"); fine to repeat back, but they are not prices.
     shopper_amounts: set[float] = field(default_factory=set)
     # (product name, size) pairs a tool reported as sold out; the reply must say so.
     sold_out_checks: list[tuple[str, str]] = field(default_factory=list)
 
-    def remember(self, product_id: str, price: float) -> None:
+    def remember(self, product_id: str, price: float, name: str) -> None:
         self.seen_product_ids.add(product_id)
         self.seen_prices.add(round(price, 2))
+        self.seen_products[product_id] = (name, round(price, 2))
 
     def remember_stock(self, *quantities: int) -> None:
         self.seen_quantities.update(quantities)
@@ -538,7 +562,7 @@ def search_catalogue(
     top = scored[: max(1, min(limit, MAX_RESULTS))]
     products = []
     for _, _, r, sizes in top:
-        deps.remember(r["product_id"], r["price"])
+        deps.remember(r["product_id"], r["price"], r["name"])
         products.append(
             ProductMatch(
                 product_id=r["product_id"],
@@ -585,7 +609,7 @@ def product_info(deps: AgentDeps, product: str) -> ProductInfo | ProductNotFound
         return _not_found(product, suggestions)
 
     sizes = _availability(detail.inventory)
-    deps.remember(detail.product_id, detail.price)
+    deps.remember(detail.product_id, detail.price, detail.name)
     deps.remember_stock(detail.total_stock, *(s.quantity for s in sizes))
     return ProductInfo(
         product_id=detail.product_id,
@@ -631,7 +655,7 @@ def stock_for_size(deps: AgentDeps, product: str, size: str) -> StockCheck | Pro
     else:
         say = f"{detail.name} is in stock in {size_code} ({this.quantity} available)."
 
-    deps.remember(detail.product_id, detail.price)
+    deps.remember(detail.product_id, detail.price, detail.name)
     deps.remember_stock(this.quantity, *(s.quantity for s in others))
     return StockCheck(
         product_id=detail.product_id,
@@ -649,7 +673,7 @@ def categories(deps: AgentDeps) -> list[CategoryInfo]:
     with closing(connect(deps.db_path)) as con:
         result = list_categories(con)
     for c in result:
-        deps.seen_prices.update({round(c.min_price, 2), round(c.max_price, 2)})
+        deps.range_prices.update({round(c.min_price, 2), round(c.max_price, 2)})
         deps.remember_stock(c.count)
     return result
 
@@ -772,7 +796,7 @@ def _cart_lookup(deps: AgentDeps, product: str, size: str):
     if detail is None:
         return _not_found(product, suggestions)
     stock = next(s.quantity for s in detail.inventory if s.size == size_code)
-    deps.remember(detail.product_id, detail.price)
+    deps.remember(detail.product_id, detail.price, detail.name)
     deps.remember_stock(stock)
     return detail, size_code, stock
 
@@ -804,7 +828,8 @@ def add_to_cart(deps: AgentDeps, product: str, size: str, quantity: int = 1) -> 
             name=detail.name, price=detail.price, image_url=detail.image_url, available=stock,
         ))
     deps.remember_stock(added, already + added)
-    deps.seen_prices.add(round(detail.price * max(added, 1), 2))
+    if added > 1:
+        deps.tool_totals.add(round(detail.price * added, 2))
     return CartToolResult(
         done=added > 0, product_id=detail.product_id, name=detail.name, size=size_code,
         price_text=price_text(detail.price), quantity_changed=added, now_in_cart=already + added,
@@ -855,14 +880,14 @@ def view_cart(deps: AgentDeps) -> CartView:
             problem = f"Only {stock} left in {size}"
         line_total = d.price * qty
         subtotal += line_total
-        deps.remember(pid, d.price)
-        deps.seen_prices.add(round(line_total, 2))
+        deps.remember(pid, d.price, d.name)
+        deps.tool_totals.add(round(line_total, 2))
         deps.remember_stock(qty, stock)
         lines.append(CartViewLine(
             product_id=pid, name=d.name, size=size, quantity=qty, price_text=price_text(d.price),
             line_total_text=price_text(line_total), in_stock=stock, problem=problem,
         ))
-    deps.seen_prices.add(round(subtotal, 2))
+    deps.tool_totals.add(round(subtotal, 2))
     count = sum(deps.cart.values())
     deps.remember_stock(count)
     return CartView(
